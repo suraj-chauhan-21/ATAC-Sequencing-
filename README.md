@@ -1,4 +1,4 @@
-# ATAC-Sequencing-
+******# ATAC-Sequencing-
 ATAC-seq: “Who left the DNA doors open?” 
 The setting  Imagine your genome as a huge apartment building. 
 Each room = a gene  
@@ -9,26 +9,22 @@ So we use a special molecular spy.
 The key player: Tn5 transposase 
 
 # ==============================================================================
-# SINGLE-CELL ATAC-SEQ PROCESSING PIPELINE
-# Analogy: "The Apartment Building" - Mapping which doors (genes) are open.
+# Single-Cell ATAC-Seq Pipeline (Signac/Seurat)
 # ==============================================================================
 
-# 1. SETUP AND LIBRARIES
-# ----------------------
-# Concept: Gathering our tools. We need Signac (for ATAC) and Seurat (for single-cell).
+# 1. INITIALIZATION & DATA LOADING ---------------------------------------------
+# We need Signac for ATAC-specific math and EnsDb for the gene "Address Book."
+
 library(Signac)
 library(Seurat)
-library(EnsDb.Hsapiens.v75) # The "Address Book" for human genes
+library(EnsDb.Hsapiens.v75) 
 library(tidyverse)
 
-# 2. DATA LOADING
-# ---------------
-# Concept: Reading the "Locksmith's Notes" (Fragment file).
-# Why? The fragment file tells us exactly where the Tn5 enzyme cut the DNA.
+# Load the count matrix (The summary table of open doors)
 counts <- Read10X_h5('data/atac_v1_pbmc_10k_filtered_peak_bc_matrix.h5')
 
-# Creating a ChromatinAssay: This tells the computer that these aren't RNA counts,
-# but physical regions of DNA that were "open."
+# Create the Chromatin Assay 
+# 'fragments' is the most important file; it's the raw list of every "tag" left by Tn5.
 chrom_assay <- CreateChromatinAssay(
   counts = counts,
   sep = c(":", "-"),
@@ -37,65 +33,55 @@ chrom_assay <- CreateChromatinAssay(
   min.features = 200
 )
 
-# Creating the Seurat Object: This is our "Building Manager." It holds all the info.
+# Build the Seurat Object (The "Building Manager" that holds all our data)
 metadata <- read.csv(file = 'data/atac_v1_pbmc_10k_singlecell.csv', header = T, row.names = 1)
 pbmc <- CreateSeuratObject(counts = chrom_assay, meta.data = metadata, assay = 'ATAC')
 
-# 3. GENE ANNOTATION
-# ------------------
-# Concept: Adding the Map. 
-# Why? Raw data only gives coordinates (e.g., Chromosome 1: 100-200). 
-# Annotations tell us "Chromosome 1: 100-200 is the door to the T-cell Receptor gene."
+
+# 2. ANNOTATION ----------------------------------------------------------------
+# Why? Raw data gives coordinates (e.g. chr1:100-200). 
+# Annotation tells us if that coordinate is a bedroom, a kitchen, or a hallway (a gene).
+
 annotations <- GetGRangesFromEnsDb(ensdb = EnsDb.Hsapiens.v75)
-seqlevels(annotations) <- paste0('chr', seqlevels(annotations)) # Match UCSC naming style
+seqlevels(annotations) <- paste0('chr', seqlevels(annotations)) # Match UCSC naming
 Annotation(pbmc) <- annotations
 
-# 4. QUALITY CONTROL (QC)
-# -----------------------
-# Concept: Evicting "Bad" Cells.
-# Why? We only want healthy cells. 
 
-# A. Nucleosome Signal: DNA is wrapped around histones (spools). 
-#    If the DNA is breaking randomly (not at spools), the cell is likely dying.
+# 3. QUALITY CONTROL (The "Bouncers") ------------------------------------------
+# We filter out low-quality cells to ensure our "map" is accurate.
+
+# Nucleosome Signal: Checks if DNA is breaking at the right intervals (around spools).
 pbmc <- NucleosomeSignal(pbmc)
 
-# B. TSS Enrichment: The "Transcription Start Site" is the gene's front door.
-#    In a good experiment, the locksmith (Tn5) should be very busy at these doors.
+# TSS Enrichment: Checks if there is a high "pile-up" of tags at gene front doors.
 pbmc <- TSSEnrichment(object = pbmc, fast = FALSE)
 
-# C. Blacklist Ratio: Some parts of the genome are "sticky" and grab enzymes 
-#    randomly. We want to ignore these "trash cans" of the genome.
+# Blacklist Ratio: Ignores "trash" regions of the genome that always show up.
 pbmc$blacklist_ratio <- pbmc$blacklist_region_fragments / pbmc$peak_region_fragments
 
-# VISUALIZING QC
-# Why? To see where to draw the line. We want high TSS scores and low Nucleosome signals.
-VlnPlot(pbmc, features = c('TSS.enrichment', 'nucleosome_signal'), ncol = 2)
-
-# FILTERING
+# Filtering criteria:
 pbmc <- subset(x = pbmc,
                 subset = nCount_ATAC > 3000 & nCount_ATAC < 30000 &
                   pct_reads_in_peaks > 15 & blacklist_ratio < 0.05 &
                   nucleosome_signal < 4 & TSS.enrichment > 3)
 
-# 5. NORMALIZATION & MATH (TF-IDF)
-# --------------------------------
-# Concept: Highlighting the unique features.
-# Why? Simple math doesn't work for ATAC because DNA is binary (the door is either 
-# open or closed). TF-IDF (Term Frequency-Inverse Document Frequency) lowers the 
-# volume on "boring" doors open in every cell and boosts "interesting" doors.
-pbmc <- RunTFIDF(pbmc)
-pbmc <- FindTopFeatures(pbmc, min.cutoff = 'q0')
-pbmc <- RunSVD(pbmc) # Dimensionality reduction (LSI)
 
-# 6. CLUSTERING & MAPPING (UMAP)
-# ------------------------------
-# Concept: Grouping similar apartments into neighborhoods.
-# Why? We want to see if all "T-cells" have the same doors open.
-# We skip Dim 1 because it often represents "cell size/depth" rather than biology.
+# 4. NORMALIZATION & DIMENSIONAL REDUCTION ------------------------------------
+# Why TF-IDF? DNA accessibility is binary (open/closed). 
+# TF-IDF (Term Frequency-Inverse Document Frequency) highlights the "rare" 
+# open doors that define a specific cell type.
+
+pbmc <- RunTFIDF(pbmc)              # Normalize
+pbmc <- FindTopFeatures(pbmc)       # Pick the most informative "doors"
+pbmc <- RunSVD(pbmc)                # Linear reduction (LSI)
+
+# 5. CLUSTERING & VISUALIZATION ------------------------------------------------
+# We group cells with similar "open doors" into clusters.
+# We start at Dim 2 because Dim 1 usually just represents total "sequencing depth."
+
 pbmc <- RunUMAP(object = pbmc, reduction = 'lsi', dims = 2:30)
 pbmc <- FindNeighbors(object = pbmc, reduction = 'lsi', dims = 2:30)
 pbmc <- FindClusters(object = pbmc, algorithm = 3)
 
-# FINAL VISUALIZATION
-# The UMAP plot: Each dot is a cell. Clusters are different cell types!
+# Plot the neighborhood map
 DimPlot(object = pbmc, label = TRUE) + NoLegend()
