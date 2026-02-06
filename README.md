@@ -6,7 +6,7 @@ Locked doors = gene OFF
 Open doors = gene ON or ready to be ON  
 The problem: we cannot directly see which doors are open.  
 
-[!image alt ](https://github.com/suraj-chauhan-21/ATAC-Sequencing-/blob/8a8a1f6c99040e46ad86cc98fd900c4e2b192d40/Tn5_Transposase_in_ATAC-seq.webp)
+(https://github.com/suraj-chauhan-21/ATAC-Sequencing-/blob/8a8a1f6c99040e46ad86cc98fd900c4e2b192d40/Tn5_Transposase_in_ATAC-seq.webp)
 
 So we use a special molecular spy.
 The key player: Tn5 transposase 
