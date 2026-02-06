@@ -20,6 +20,10 @@ setwd("~/Desktop/demo/single_cell_ATACSeq")
 EnsDb.Hsapiens.v75: Provides the genomic coordinates (genes/exons) for the hg19 genome.
 
 
+
+<img width="1027" height="624" alt="image" src="https://github.com/user-attachments/assets/e71fb9ca-d62b-4c66-b9d3-5b492ae9ea72" />
+
+
 # install packages
 remotes::install_github("stuart-lab/signac", ref="develop")
 install.packages("Matrix", type = "source")
