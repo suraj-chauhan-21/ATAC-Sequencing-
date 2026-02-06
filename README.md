@@ -1,4 +1,5 @@
 # ATAC-Sequencing
+
 ATAC-seq: “Who left the DNA doors open?” 
 The setting  Imagine your genome as a huge apartment building. 
 Each room = a gene  
@@ -160,6 +161,7 @@ pbmc <- FindClusters(object = pbmc, algorithm = 3)
 
 Visualize the result!
 DimPlot(object = pbmc, label = TRUE) + NoLegend()
+
 
 
 **
