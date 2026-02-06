@@ -44,7 +44,7 @@ head(frag.file)
 counts <- Read10X_h5('data/atac_v1_pbmc_10k_filtered_peak_bc_matrix.h5')
 counts[1:10,1:10]
 
-# Why CreateChromatinAssay? 
+Why CreateChromatinAssay? 
 Unlike RNA-seq, ATAC data requires genomic ranges. This step links the count matrix 
 with the fragment file and defines which genome assembly (e.g., hg19) is being used.
 chrom_assay <- CreateChromatinAssay(
@@ -62,7 +62,7 @@ metadata <- read.csv(file = 'data/atac_v1_pbmc_10k_singlecell.csv', header = T, 
 View(metadata)
 
 
-# Create a Seurat Object: 
+Create a Seurat Object: 
 This is the container that holds counts, metadata, and later, clusters.
 pbmc <- CreateSeuratObject(
   counts = chrom_assay,
@@ -73,14 +73,14 @@ pbmc <- CreateSeuratObject(
 str(pbmc)
 
 
-# Adding Gene Annotation 
+ Adding Gene Annotation 
  Why? The ATAC matrix only tells us about coordinates (e.g., chr1:100-200). 
 Adding annotations allows us to see which genes are near those open regions.
 
 pbmc@assays$ATAC@annotation
 annotations <- GetGRangesFromEnsDb(ensdb = EnsDb.Hsapiens.v75)
 
-# Change to UCSC style (chr1) because EnsDb uses Ensembl style (1). 
+Change to UCSC style (chr1) because EnsDb uses Ensembl style (1). 
 If styles don't match, you won't be able to map peaks to genes.
 seqlevels(annotations) <- paste0('chr', seqlevels(annotations))
 
@@ -95,11 +95,12 @@ Why NucleosomeSignal? DNA wraps around nucleosomes.
 Successful ATAC-seq should show a "ladder" pattern of fragments (mononucleosomal, dinucleosomal).
 pbmc <- NucleosomeSignal(pbmc)
 
-# Why TSSEnrichment? Transcription Start Sites (TSS) are usually very open. 
+ Why TSSEnrichment? Transcription Start Sites (TSS) are usually very open. 
 High signal at TSS vs. background is the "gold standard" for ATAC-seq quality.
 pbmc <- TSSEnrichment(object = pbmc, fast = FALSE)
 
-# Why Blacklist Ratio?
+ 
+Why Blacklist Ratio?
 Certain regions of the genome (blacklist) produce high signal 
 regardless of cell type (usually due to repetitive elements). High ratios indicate noise.
 pbmc$blacklist_ratio <- pbmc$blacklist_region_fragments / pbmc$peak_region_fragments
