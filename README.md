@@ -1,4 +1,4 @@
-# ATAC-Sequencing-
+**# ATAC-Sequencing-
 ATAC-seq: “Who left the DNA doors open?” 
 The setting  Imagine your genome as a huge apartment building. 
 Each room = a gene  
@@ -11,18 +11,18 @@ The problem: we cannot directly see which doors are open.
 So we use a special molecular spy.
 The key player: Tn5 transposase 
 # script to process single-cell ATAC-Seq data
-# Vignette: https://stuartlab.org/signac/articles/pbmc_vignette
-# setwd("~/Desktop/demo/single_cell_ATACSeq")
+Vignette: https://stuartlab.org/signac/articles/pbmc_vignette
+setwd("~/Desktop/demo/single_cell_ATACSeq")
 
 # --- Why these packages? ---
-# Signac: The extension of Seurat designed specifically for chromatin data.
-# EnsDb.Hsapiens.v75: Provides the genomic coordinates (genes/exons) for the hg19 genome.
+ Signac: The extension of Seurat designed specifically for chromatin data.
+EnsDb.Hsapiens.v75: Provides the genomic coordinates (genes/exons) for the hg19 genome.
 
 # install packages
-# remotes::install_github("stuart-lab/signac", ref="develop")
-# install.packages("Matrix", type = "source")
-# install.packages("irlba", type = "source")
-# BiocManager::install("EnsDb.Hsapiens.v75")
+remotes::install_github("stuart-lab/signac", ref="develop")
+install.packages("Matrix", type = "source")
+install.packages("irlba", type = "source")
+BiocManager::install("EnsDb.Hsapiens.v75")
 
 library(Signac)
 library(Seurat)
@@ -30,22 +30,22 @@ library(EnsDb.Hsapiens.v75)
 library(tidyverse)
 
 # --- What is a fragment file? ---
-# It is a tab-indexed file containing every single Tn5 integration site recorded. 
-# We need this because the 'peak matrix' only counts reads in specific regions; 
-# the fragment file allows us to calculate QC metrics like TSS enrichment from scratch.
+ It is a tab-indexed file containing every single Tn5 integration site recorded. 
+We need this because the 'peak matrix' only counts reads in specific regions; 
+ the fragment file allows us to calculate QC metrics like TSS enrichment from scratch.
 frag.file <- read.delim('data/atac_v1_pbmc_10k_fragments.tsv.gz', header = F, nrows = 10)
 head(frag.file)
 
 
 # 1. Read in data -----------------
 
-# H5 files contain the sparse matrix of counts (Cells x Peaks).
+ H5 files contain the sparse matrix of counts (Cells x Peaks).
 counts <- Read10X_h5('data/atac_v1_pbmc_10k_filtered_peak_bc_matrix.h5')
 counts[1:10,1:10]
 
 # --- Why CreateChromatinAssay? ---
-# Unlike RNA-seq, ATAC data requires genomic ranges. This step links the count matrix 
-# with the fragment file and defines which genome assembly (e.g., hg19) is being used.
+ Unlike RNA-seq, ATAC data requires genomic ranges. This step links the count matrix 
+with the fragment file and defines which genome assembly (e.g., hg19) is being used.
 chrom_assay <- CreateChromatinAssay(
   counts = counts,
   sep = c(":", "-"),
@@ -60,7 +60,9 @@ str(chrom_assay)
 metadata <- read.csv(file = 'data/atac_v1_pbmc_10k_singlecell.csv', header = T, row.names = 1)
 View(metadata)
 
-# Create a Seurat Object: This is the container that holds counts, metadata, and later, clusters.
+
+# Create a Seurat Object: 
+This is the container that holds counts, metadata, and later, clusters.
 pbmc <- CreateSeuratObject(
   counts = chrom_assay,
   meta.data = metadata,
@@ -71,14 +73,14 @@ str(pbmc)
 
 
 # ....Adding Gene Annotation -------------------
-# Why? The ATAC matrix only tells us about coordinates (e.g., chr1:100-200). 
-# Adding annotations allows us to see which genes are near those open regions.
+ Why? The ATAC matrix only tells us about coordinates (e.g., chr1:100-200). 
+Adding annotations allows us to see which genes are near those open regions.
 
 pbmc@assays$ATAC@annotation
 annotations <- GetGRangesFromEnsDb(ensdb = EnsDb.Hsapiens.v75)
 
 # Change to UCSC style (chr1) because EnsDb uses Ensembl style (1). 
-# If styles don't match, you won't be able to map peaks to genes.
+If styles don't match, you won't be able to map peaks to genes.
 seqlevels(annotations) <- paste0('chr', seqlevels(annotations))
 
 Annotation(pbmc) <- annotations
@@ -88,23 +90,24 @@ pbmc@assays$ATAC@annotation
 # 2. Computing QC ---------------------
 
 
-# Why NucleosomeSignal? DNA wraps around nucleosomes. 
-# Successful ATAC-seq should show a "ladder" pattern of fragments (mononucleosomal, dinucleosomal).
+Why NucleosomeSignal? DNA wraps around nucleosomes. 
+Successful ATAC-seq should show a "ladder" pattern of fragments (mononucleosomal, dinucleosomal).
 pbmc <- NucleosomeSignal(pbmc)
 
 # Why TSSEnrichment? Transcription Start Sites (TSS) are usually very open. 
-# High signal at TSS vs. background is the "gold standard" for ATAC-seq quality.
+High signal at TSS vs. background is the "gold standard" for ATAC-seq quality.
 pbmc <- TSSEnrichment(object = pbmc, fast = FALSE)
 
-# Why Blacklist Ratio? Certain regions of the genome (blacklist) produce high signal 
-# regardless of cell type (usually due to repetitive elements). High ratios indicate noise.
+# Why Blacklist Ratio?
+Certain regions of the genome (blacklist) produce high signal 
+regardless of cell type (usually due to repetitive elements). High ratios indicate noise.
 pbmc$blacklist_ratio <- pbmc$blacklist_region_fragments / pbmc$peak_region_fragments
 pbmc$pct_reads_in_peaks <- pbmc$peak_region_fragments / pbmc$passed_filters * 100
 
 View(pbmc@meta.data)
 
 # ....Visualizing QC --------------------
-# Use these plots to define your "cutoff" lines for filtering.
+Use these plots to define your "cutoff" lines for filtering.
 colnames(pbmc@meta.data)
 a1 <- DensityScatter(pbmc, x = 'nCount_ATAC', y = 'TSS.enrichment', log_x = TRUE, quantiles = TRUE)
 a2 <- DensityScatter(pbmc, x = 'nucleosome_signal', y = 'TSS.enrichment', log_x = TRUE, quantiles = TRUE)
@@ -118,7 +121,7 @@ VlnPlot(object = pbmc,
 
 
 # ....Filtering poor quality cells --------------------
-# Tip: These thresholds are "vignette" defaults. Always adjust based on your VlnPlots above.
+ Tip: These thresholds are "vignette" defaults. Always adjust based on your VlnPlots above.
 pbmc <- subset(x = pbmc,
                 subset = nCount_ATAC > 3000 &
                  nCount_ATAC < 30000 &
@@ -130,30 +133,33 @@ pbmc <- subset(x = pbmc,
 
 # 3. Normalization and linear dimensional reduction ------------------
 
-# Why RunTFIDF? ATAC data is binary (open or closed). 
-# TF-IDF normalizes for total library size and for how common a peak is across cells.
+Why RunTFIDF? ATAC data is binary (open or closed). 
+TF-IDF normalizes for total library size and for how common a peak is across cells.
 pbmc <- RunTFIDF(pbmc) 
 
-# Why FindTopFeatures? We only use the most variable peaks for clustering to reduce noise.
+Why FindTopFeatures? We only use the most variable peaks for clustering to reduce noise.
 pbmc <- FindTopFeatures(pbmc, min.cutoff = 'q0') 
 
-# Why RunSVD? (Latent Semantic Indexing - LSI)
-# This is the "PCA equivalent" for ATAC-seq. It compresses the sparse peak data.
+Why RunSVD? (Latent Semantic Indexing - LSI)
+#This is the "PCA equivalent" for ATAC-seq. It compresses the sparse peak data.
 pbmc <- RunSVD(pbmc) 
 
-# Tip: Use DepthCor to see if the first LSI component correlates with sequencing depth. 
-# If it does, you should exclude LSI_1 from downstream clustering (dims = 2:30).
+Tip: Use DepthCor to see if the first LSI component correlates with sequencing depth. 
+If it does, you should exclude LSI_1 from downstream clustering (dims = 2:30).
 DepthCor(pbmc)
 
 
 # 4. Non-linear dimensional reduction and Clustering -------------------
 
-# We use dims 2:30 because LSI component 1 often captures technical variation (depth).
+ We use dims 2:30 because LSI component 1 often captures technical variation (depth).
 pbmc <- RunUMAP(object = pbmc, reduction = 'lsi', dims = 2:30)
 pbmc <- FindNeighbors(object = pbmc, reduction = 'lsi', dims = 2:30)
 
-# Algorithm 3 is SLM (Smart Local Moving), which is robust for large datasets.
+Algorithm 3 is SLM (Smart Local Moving), which is robust for large datasets.
 pbmc <- FindClusters(object = pbmc, algorithm = 3)
 
-# Visualize the result!
+Visualize the result!
 DimPlot(object = pbmc, label = TRUE) + NoLegend()
+
+
+**
