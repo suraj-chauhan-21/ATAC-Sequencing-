@@ -19,6 +19,7 @@ setwd("~/Desktop/demo/single_cell_ATACSeq")
  Signac: The extension of Seurat designed specifically for chromatin data.
 EnsDb.Hsapiens.v75: Provides the genomic coordinates (genes/exons) for the hg19 genome.
 
+
 # install packages
 remotes::install_github("stuart-lab/signac", ref="develop")
 install.packages("Matrix", type = "source")
@@ -162,6 +163,9 @@ pbmc <- FindClusters(object = pbmc, algorithm = 3)
 
 Visualize the result!
 DimPlot(object = pbmc, label = TRUE) + NoLegend()
+
+<img width="749" height="207" alt="image" src="https://github.com/user-attachments/assets/78680284-d739-4914-82b7-4896f739d144" />
+
 
 
 
