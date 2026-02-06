@@ -19,9 +19,7 @@ setwd("~/Desktop/demo/single_cell_ATACSeq")
  Signac: The extension of Seurat designed specifically for chromatin data.
 EnsDb.Hsapiens.v75: Provides the genomic coordinates (genes/exons) for the hg19 genome.
 
-
-
-<img width="1027" height="624" alt="image" src="https://github.com/user-attachments/assets/e71fb9ca-d62b-4c66-b9d3-5b492ae9ea72" />
+<img width="990" height="571" alt="image" src="https://github.com/user-attachments/assets/dfe0df32-4c24-45c2-95af-54d7bb1b8826" />
 
 
 # install packages
