@@ -1,4 +1,4 @@
-**# ATAC-Sequencing-
+# ATAC-Sequencing-
 ATAC-seq: “Who left the DNA doors open?” 
 The setting  Imagine your genome as a huge apartment building. 
 Each room = a gene  
