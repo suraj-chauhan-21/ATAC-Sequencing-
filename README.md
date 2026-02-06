@@ -1,4 +1,4 @@
-# ATAC-Sequencing-
+# ATAC-Sequencing
 ATAC-seq: “Who left the DNA doors open?” 
 The setting  Imagine your genome as a huge apartment building. 
 Each room = a gene  
@@ -14,7 +14,7 @@ The key player: Tn5 transposase
 Vignette: https://stuartlab.org/signac/articles/pbmc_vignette
 setwd("~/Desktop/demo/single_cell_ATACSeq")
 
-# --- Why these packages? ---
+# Why these packages? 
  Signac: The extension of Seurat designed specifically for chromatin data.
 EnsDb.Hsapiens.v75: Provides the genomic coordinates (genes/exons) for the hg19 genome.
 
@@ -29,7 +29,7 @@ library(Seurat)
 library(EnsDb.Hsapiens.v75)
 library(tidyverse)
 
-# --- What is a fragment file? ---
+#  What is a fragment file? 
  It is a tab-indexed file containing every single Tn5 integration site recorded. 
 We need this because the 'peak matrix' only counts reads in specific regions; 
  the fragment file allows us to calculate QC metrics like TSS enrichment from scratch.
@@ -37,14 +37,14 @@ frag.file <- read.delim('data/atac_v1_pbmc_10k_fragments.tsv.gz', header = F, nr
 head(frag.file)
 
 
-# 1. Read in data -----------------
+# 1. Read in data 
 
  H5 files contain the sparse matrix of counts (Cells x Peaks).
 counts <- Read10X_h5('data/atac_v1_pbmc_10k_filtered_peak_bc_matrix.h5')
 counts[1:10,1:10]
 
-# --- Why CreateChromatinAssay? ---
- Unlike RNA-seq, ATAC data requires genomic ranges. This step links the count matrix 
+# Why CreateChromatinAssay? 
+Unlike RNA-seq, ATAC data requires genomic ranges. This step links the count matrix 
 with the fragment file and defines which genome assembly (e.g., hg19) is being used.
 chrom_assay <- CreateChromatinAssay(
   counts = counts,
@@ -72,7 +72,7 @@ pbmc <- CreateSeuratObject(
 str(pbmc)
 
 
-# ....Adding Gene Annotation -------------------
+# Adding Gene Annotation 
  Why? The ATAC matrix only tells us about coordinates (e.g., chr1:100-200). 
 Adding annotations allows us to see which genes are near those open regions.
 
@@ -87,7 +87,7 @@ Annotation(pbmc) <- annotations
 pbmc@assays$ATAC@annotation
 
 
-# 2. Computing QC ---------------------
+# 2. Computing QC 
 
 
 Why NucleosomeSignal? DNA wraps around nucleosomes. 
@@ -106,7 +106,7 @@ pbmc$pct_reads_in_peaks <- pbmc$peak_region_fragments / pbmc$passed_filters * 10
 
 View(pbmc@meta.data)
 
-# ....Visualizing QC --------------------
+# Visualizing QC 
 Use these plots to define your "cutoff" lines for filtering.
 colnames(pbmc@meta.data)
 a1 <- DensityScatter(pbmc, x = 'nCount_ATAC', y = 'TSS.enrichment', log_x = TRUE, quantiles = TRUE)
@@ -120,7 +120,7 @@ VlnPlot(object = pbmc,
         ncol = 6)
 
 
-# ....Filtering poor quality cells --------------------
+# Filtering poor quality cells 
  Tip: These thresholds are "vignette" defaults. Always adjust based on your VlnPlots above.
 pbmc <- subset(x = pbmc,
                 subset = nCount_ATAC > 3000 &
@@ -131,7 +131,7 @@ pbmc <- subset(x = pbmc,
                  TSS.enrichment > 3)
 
 
-# 3. Normalization and linear dimensional reduction ------------------
+# 3. Normalization and linear dimensional reduction 
 
 Why RunTFIDF? ATAC data is binary (open or closed). 
 TF-IDF normalizes for total library size and for how common a peak is across cells.
@@ -149,7 +149,7 @@ If it does, you should exclude LSI_1 from downstream clustering (dims = 2:30).
 DepthCor(pbmc)
 
 
-# 4. Non-linear dimensional reduction and Clustering -------------------
+# 4. Non-linear dimensional reduction and Clustering 
 
  We use dims 2:30 because LSI component 1 often captures technical variation (depth).
 pbmc <- RunUMAP(object = pbmc, reduction = 'lsi', dims = 2:30)
