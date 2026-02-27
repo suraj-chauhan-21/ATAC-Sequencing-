@@ -1,3 +1,250 @@
+###############################################################
+
+# 01_scATAC_signac_pipeline.R
+
+# Single-cell ATAC-seq Analysis Pipeline (10x Genomics + Signac)
+
+#
+
+# Author: Suraj Chauhan
+
+# Description:
+
+# Loads 10x scATAC data → QC → LSI → Clustering → Save object
+
+#
+
+# Expected directory structure:
+
+# project/
+
+# ├── 01_scATAC_signac_pipeline.R
+
+# ├── data/
+
+# └── results/   (auto-created)
+
+###############################################################
+
+# -----------------------------#
+
+# 0. Setup Paths
+
+# -----------------------------#
+
+project_dir <- getwd()
+data_dir    <- file.path(project_dir, "data")
+results_dir <- file.path(project_dir, "results")
+
+dir.create(results_dir, showWarnings = FALSE)
+
+cat("Project directory:", project_dir, "\n")
+
+# -----------------------------#
+
+# 1. Check Required Packages
+
+# -----------------------------#
+
+required_pkgs <- c(
+"Signac",
+"Seurat",
+"EnsDb.Hsapiens.v75",
+"tidyverse",
+"patchwork"
+)
+
+for (pkg in required_pkgs) {
+if (!requireNamespace(pkg, quietly = TRUE)) {
+stop(paste("Missing package:", pkg,
+"\nInstall it before running the pipeline."))
+}
+}
+
+library(Signac)
+library(Seurat)
+library(EnsDb.Hsapiens.v75)
+library(tidyverse)
+library(patchwork)
+
+cat("All packages loaded successfully.\n")
+
+# -----------------------------#
+
+# 2. Define Input Files
+
+# -----------------------------#
+
+frag_file   <- file.path(data_dir, "atac_v1_pbmc_10k_fragments.tsv.gz")
+matrix_file <- file.path(data_dir, "atac_v1_pbmc_10k_filtered_peak_bc_matrix.h5")
+meta_file   <- file.path(data_dir, "atac_v1_pbmc_10k_singlecell.csv")
+
+if (!file.exists(frag_file)) stop("Fragment file not found.")
+if (!file.exists(matrix_file)) stop("Matrix file not found.")
+if (!file.exists(meta_file)) stop("Metadata file not found.")
+
+# -----------------------------#
+
+# 3. Load 10x Peak Matrix
+
+# -----------------------------#
+
+cat("Reading 10x peak matrix...\n")
+counts <- Read10X_h5(matrix_file)
+
+# -----------------------------#
+
+# 4. Create Chromatin Assay
+
+# -----------------------------#
+
+cat("Creating ChromatinAssay...\n")
+
+chrom_assay <- CreateChromatinAssay(
+counts = counts,
+sep = c(":", "-"),
+fragments = frag_file,
+min.cells = 10,
+min.features = 200
+)
+
+# -----------------------------#
+
+# 5. Load Metadata and Create Object
+
+# -----------------------------#
+
+metadata <- read.csv(meta_file, row.names = 1)
+
+pbmc <- CreateSeuratObject(
+counts = chrom_assay,
+assay = "ATAC",
+meta.data = metadata
+)
+
+cat("Seurat object created.\n")
+
+# -----------------------------#
+
+# 6. Add Gene Annotation
+
+# -----------------------------#
+
+cat("Adding gene annotations...\n")
+
+annotations <- GetGRangesFromEnsDb(EnsDb.Hsapiens.v75)
+
+# Convert Ensembl → UCSC naming
+
+seqlevels(annotations) <- paste0("chr", seqlevels(annotations))
+
+Annotation(pbmc) <- annotations
+
+# -----------------------------#
+
+# 7. Compute QC Metrics
+
+# -----------------------------#
+
+cat("Computing QC metrics...\n")
+
+pbmc <- NucleosomeSignal(pbmc)
+pbmc <- TSSEnrichment(pbmc, fast = FALSE)
+
+pbmc$pct_reads_in_peaks <-
+pbmc$peak_region_fragments / pbmc$passed_filters * 100
+
+pbmc$blacklist_ratio <-
+pbmc$blacklist_region_fragments / pbmc$peak_region_fragments
+
+# -----------------------------#
+
+# 8. QC Filtering (Editable Thresholds)
+
+# -----------------------------#
+
+cat("Filtering low-quality cells...\n")
+
+min_fragments <- 3000
+max_fragments <- 30000
+min_TSS       <- 3
+max_nuc       <- 4
+max_blacklist <- 0.05
+min_peak_pct  <- 15
+
+pbmc <- subset(
+pbmc,
+subset =
+nCount_ATAC > min_fragments &
+nCount_ATAC < max_fragments &
+pct_reads_in_peaks > min_peak_pct &
+blacklist_ratio < max_blacklist &
+nucleosome_signal < max_nuc &
+TSS.enrichment > min_TSS
+)
+
+cat("Remaining cells:", ncol(pbmc), "\n")
+
+# -----------------------------#
+
+# 9. Dimensional Reduction (LSI)
+
+# -----------------------------#
+
+cat("Running TF-IDF normalization...\n")
+
+pbmc <- RunTFIDF(pbmc)
+pbmc <- FindTopFeatures(pbmc, min.cutoff = "q0")
+pbmc <- RunSVD(pbmc)
+
+DepthCor(pbmc)
+
+# -----------------------------#
+
+# 10. Clustering + UMAP
+
+# -----------------------------#
+
+cat("Running clustering...\n")
+
+lsi_dims <- 2:30   # Exclude LSI_1 (depth effect)
+
+pbmc <- RunUMAP(pbmc, reduction = "lsi", dims = lsi_dims)
+pbmc <- FindNeighbors(pbmc, reduction = "lsi", dims = lsi_dims)
+pbmc <- FindClusters(pbmc, algorithm = 3)
+
+# -----------------------------#
+
+# 11. Save Results
+
+# -----------------------------#
+
+cat("Saving processed object...\n")
+
+saveRDS(pbmc, file = file.path(results_dir, "pbmc_atac_processed.rds"))
+
+# Save UMAP figure
+
+png(file.path(results_dir, "UMAP_clusters.png"), width = 1800, height = 1400, res = 200)
+print(DimPlot(pbmc, label = TRUE) + NoLegend())
+dev.off()
+
+# -----------------------------#
+
+# 12. Save Session Info (Reproducibility)
+
+# -----------------------------#
+
+writeLines(
+capture.output(sessionInfo()),
+file.path(results_dir, "sessionInfo.txt")
+)
+
+cat("Pipeline completed successfully.\n")
+###############################################################
+
+
+
 
 # ATAC-Sequencing
 
