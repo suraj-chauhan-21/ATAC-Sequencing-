@@ -1,5 +1,229 @@
 # ATAC-Sequencing
 
+## Overview
+
+This repository contains a reproducible workflow for analyzing **10x Genomics single-cell ATAC-seq (scATAC-seq)** data using the **Signac + Seurat** framework in R.
+
+The goal is to identify open chromatin regions, perform quality control, reduce dimensionality using LSI, cluster cells, and integrate chromatin accessibility with gene activity for biological interpretation.
+
+---
+
+## Conceptual Background
+
+ATAC-seq measures **chromatin accessibility**.
+
+* Each genomic region behaves like a regulatory “door”.
+* **Closed chromatin** → transcriptionally inactive.
+* **Open chromatin** → regulatory potential or active transcription.
+* The Tn5 transposase inserts sequencing adapters preferentially into open regions, allowing us to map accessible DNA genome-wide.
+
+This enables inference of:
+
+* Regulatory landscapes
+* Cell identity
+* Transcription factor activity
+* Epigenomic heterogeneity at single-cell resolution
+
+---
+
+## Workflow Summary
+
+The analysis is divided into two scripts:
+
+| Step | Script                        | Description                                                |
+| ---- | ----------------------------- | ---------------------------------------------------------- |
+| 1    | `01_scATAC_signac_pipeline.R` | Preprocessing, QC, LSI, clustering                         |
+| 2    | `02_label_transfer_and_DA.R`  | Gene activity, RNA integration, differential accessibility |
+
+---
+
+## Repository Structure
+
+```
+ATAC-Sequencing/
+│
+├── 01_scATAC_signac_pipeline.R
+├── 02_label_transfer_and_DA.R
+├── data/                         # Input files go here
+├── results/                      # Auto-generated outputs
+└── README.md
+```
+
+---
+
+## Input Data Requirements
+
+Place the following 10x Genomics outputs inside the `data/` directory:
+
+```
+data/
+├── atac_v1_pbmc_10k_fragments.tsv.gz
+├── atac_v1_pbmc_10k_filtered_peak_bc_matrix.h5
+├── atac_v1_pbmc_10k_singlecell.csv
+└── pbmc_10k_v3.rds   (scRNA reference for label transfer)
+```
+
+---
+
+## Installation
+
+Install required packages in R:
+
+```r
+install.packages(c("Seurat", "tidyverse", "patchwork"))
+install.packages("BiocManager")
+BiocManager::install("EnsDb.Hsapiens.v75")
+
+# Signac (development version)
+install.packages("remotes")
+remotes::install_github("stuart-lab/signac", ref = "develop")
+```
+
+---
+
+## Running the Pipeline
+
+From the project directory:
+
+### Step 1 — Preprocess scATAC Data
+
+```bash
+Rscript 01_scATAC_signac_pipeline.R
+```
+
+This performs:
+
+* Fragment parsing
+* Chromatin assay construction
+* TSS enrichment & nucleosome QC
+* TF-IDF normalization
+* Latent Semantic Indexing (LSI)
+* UMAP embedding
+* Clustering
+
+Outputs saved in:
+
+```
+results/
+├── pbmc_atac_processed.rds
+├── UMAP_clusters.png
+└── sessionInfo.txt
+```
+
+---
+
+### Step 2 — Biological Interpretation
+
+```bash
+Rscript 02_label_transfer_and_DA.R
+```
+
+This performs:
+
+* Gene activity inference
+* Integration with scRNA-seq reference
+* Cell type annotation via label transfer
+* Differential accessibility analysis
+* Coverage visualization
+
+Outputs:
+
+```
+results/
+├── pbmc_atac_annotated.rds
+├── UMAP_predicted_labels.png
+├── DA_peaks_CD4_vs_Mono.csv
+└── Coverage_top_DA_peak.png
+```
+
+---
+
+## Key Methods Implemented
+
+### Quality Control Metrics
+
+* **TSS Enrichment** — signal-to-noise indicator
+* **Nucleosome Signal** — fragment periodicity check
+* **Blacklist Ratio** — removal of artefactual regions
+* **Fragments in Peaks (%)** — library specificity
+
+### Dimensional Reduction
+
+TF-IDF + SVD (Latent Semantic Indexing) is used instead of PCA because ATAC-seq data is:
+
+* Sparse
+* Binary-like
+* Region-based rather than gene-based
+
+### Integration Strategy
+
+Gene activity scores derived from accessibility are aligned to a reference scRNA-seq atlas to transfer biological labels.
+
+---
+
+## Customization
+
+QC thresholds can be tuned inside Script-01:
+
+```
+min_fragments
+max_fragments
+min_TSS
+max_nuc
+min_peak_pct
+```
+
+These should be dataset-specific.
+
+---
+
+## Reproducibility Features
+
+* No hard-coded paths
+* Session info automatically saved
+* Relative directory structure
+* Modular execution
+* Compatible with HPC or local systems
+
+---
+
+## Recommended Citation of Methods
+
+If using this workflow, please cite:
+
+* Signac framework
+* Seurat single-cell integration methodology
+* 10x Genomics scATAC technology description
+
+---
+
+## Notes
+
+This repository is designed as:
+
+* A learning resource for chromatin accessibility analysis
+* A reproducible starting point for new datasets
+* A modular template adaptable to multi-omic studies
+
+---
+
+## Future Extensions
+
+Planned additions:
+
+* Motif enrichment analysis
+* Peak-to-gene linkage
+* Pseudotime chromatin dynamics
+* Multiome integration support
+
+---
+
+## Contact
+
+For questions, suggestions, or collaboration inquiries, feel free to reach out.
+
+# ATAC-Sequencing
+
 ATAC-seq: “Who left the DNA doors open?” 
 The setting  Imagine your genome as a huge apartment building. 
 Each room = a gene  
@@ -23,6 +247,7 @@ EnsDb.Hsapiens.v75: Provides the genomic coordinates (genes/exons) for the hg19 
 
 
 # install packages
+
 remotes::install_github("stuart-lab/signac", ref="develop")
 install.packages("Matrix", type = "source")
 install.packages("irlba", type = "source")
