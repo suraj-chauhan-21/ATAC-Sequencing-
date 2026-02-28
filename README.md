@@ -1,8 +1,27 @@
 # ATAC-Sequencing
 
+ATAC-seq: “Who left the DNA doors open?” 
+The setting  Imagine your genome as a huge apartment building. 
+Each room = a gene  
+Locked doors = gene OFF 
+Open doors = gene ON or ready to be ON  
+The problem: we cannot directly see which doors are open.  
+
+![image alt](https://github.com/suraj-chauhan-21/ATAC-Sequencing-/blob/8a8a1f6c99040e46ad86cc98fd900c4e2b192d40/Tn5_Transposase_in_ATAC-seq.webp)
+
+So we use a special molecular spy.
+The key player: Tn5 transposase 
+
 ## Overview
 
 This repository contains a reproducible workflow for analyzing **10x Genomics single-cell ATAC-seq (scATAC-seq)** data using the **Signac + Seurat** framework in R.
+
+
+# Why these packages? 
+ Signac: The extension of Seurat designed specifically for chromatin data.
+EnsDb.Hsapiens.v75: Provides the genomic coordinates (genes/exons) for the hg19 genome.
+
+<img width="990" height="571" alt="image" src="https://github.com/user-attachments/assets/dfe0df32-4c24-45c2-95af-54d7bb1b8826" />
 
 The goal is to identify open chromatin regions, perform quality control, reduce dimensionality using LSI, cluster cells, and integrate chromatin accessibility with gene activity for biological interpretation.
 
@@ -25,6 +44,13 @@ This enables inference of:
 * Epigenomic heterogeneity at single-cell resolution
 
 ---
+#  What is a fragment file? 
+ It is a tab-indexed file containing every single Tn5 integration site recorded. 
+We need this because the 'peak matrix' only counts reads in specific regions; 
+ the fragment file allows us to calculate QC metrics like TSS enrichment from scratch.
+frag.file <- read.delim('data/atac_v1_pbmc_10k_fragments.tsv.gz', header = F, nrows = 10)
+head(frag.file)
+
 
 ## Workflow Summary
 
@@ -32,7 +58,7 @@ The analysis is divided into two scripts:
 
 | Step | Script                        | Description                                                |
 | ---- | ----------------------------- | ---------------------------------------------------------- |
-| 1    | `01_scATAC_signac_pipeline.R` | Preprocessing, QC, LSI, clustering                         |
+| 1    | `ATAC_seq.R`                  | Preprocessing, QC, LSI, clustering                         |
 | 2    | `02_label_transfer_and_DA.R`  | Gene activity, RNA integration, differential accessibility |
 
 ---
@@ -218,52 +244,15 @@ Planned additions:
 
 ---
 
-## Contact
-
-For questions, suggestions, or collaboration inquiries, feel free to reach out.
-
-# ATAC-Sequencing
-
-ATAC-seq: “Who left the DNA doors open?” 
-The setting  Imagine your genome as a huge apartment building. 
-Each room = a gene  
-Locked doors = gene OFF 
-Open doors = gene ON or ready to be ON  
-The problem: we cannot directly see which doors are open.  
-
-![image alt](https://github.com/suraj-chauhan-21/ATAC-Sequencing-/blob/8a8a1f6c99040e46ad86cc98fd900c4e2b192d40/Tn5_Transposase_in_ATAC-seq.webp)
-
-So we use a special molecular spy.
-The key player: Tn5 transposase 
-# script to process single-cell ATAC-Seq data
-Vignette: https://stuartlab.org/signac/articles/pbmc_vignette
-setwd("~/Desktop/demo/single_cell_ATACSeq")
-
-# Why these packages? 
- Signac: The extension of Seurat designed specifically for chromatin data.
-EnsDb.Hsapiens.v75: Provides the genomic coordinates (genes/exons) for the hg19 genome.
-
-<img width="990" height="571" alt="image" src="https://github.com/user-attachments/assets/dfe0df32-4c24-45c2-95af-54d7bb1b8826" />
 
 
-# install packages
 
-remotes::install_github("stuart-lab/signac", ref="develop")
-install.packages("Matrix", type = "source")
-install.packages("irlba", type = "source")
-BiocManager::install("EnsDb.Hsapiens.v75")
 
-library(Signac)
-library(Seurat)
-library(EnsDb.Hsapiens.v75)
-library(tidyverse)
 
-#  What is a fragment file? 
- It is a tab-indexed file containing every single Tn5 integration site recorded. 
-We need this because the 'peak matrix' only counts reads in specific regions; 
- the fragment file allows us to calculate QC metrics like TSS enrichment from scratch.
-frag.file <- read.delim('data/atac_v1_pbmc_10k_fragments.tsv.gz', header = F, nrows = 10)
-head(frag.file)
+
+
+
+
 
 
 # 1. Read in data 
