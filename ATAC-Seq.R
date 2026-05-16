@@ -1,568 +1,263 @@
-###############################################################
+# =============================================================================
+# ATAC-Seq Analysis Pipeline — Script 01: Preprocessing, QC & Clustering
+# =============================================================================
+# Author  : suraj-chauhan-21
+# Framework: Signac + Seurat (R)
+# Dataset : 10x Genomics PBMC 10k scATAC-seq (hg19)
+# Usage   : Rscript ATAC-Seq.R
+#           (or source() interactively)
+# =============================================================================
 
-# 01_scATAC_signac_pipeline.R
+# ── 0. Load config & libraries ──────────────────────────────────────────────
 
-# Single-cell ATAC-seq Analysis Pipeline (10x Genomics + Signac)
+# All tunable parameters live in config.yaml — never edit thresholds here.
+library(yaml)
+cfg <- yaml::read_yaml("config.yaml")
 
-#
+suppressPackageStartupMessages({
+  library(Signac)
+  library(Seurat)
+  library(EnsDb.Hsapiens.v75)
+  library(tidyverse)
+  library(patchwork)
+})
 
-# Author: Suraj Chauhan
+set.seed(42)                          # reproducible UMAP / clustering
+dir.create("results", showWarnings = FALSE)
 
-# Description:
-
-# Loads 10x scATAC data → QC → LSI → Clustering → Save object
-
-#
-
-# Expected directory structure:
-
-# project/
-
-# ├── 01_scATAC_signac_pipeline.R
-
-# ├── data/
-
-# └── results/   (auto-created)
-
-###############################################################
-
-# -----------------------------#
-
-# 0. Setup Paths
-
-# -----------------------------#
-
-project_dir <- getwd()
-data_dir    <- file.path(project_dir, "data")
-results_dir <- file.path(project_dir, "results")
-
-dir.create(results_dir, showWarnings = FALSE)
-
-cat("Project directory:", project_dir, "\n")
-
-# -----------------------------#
-
-# 1. Check Required Packages
-
-# -----------------------------#
-
-required_pkgs <- c(
-"Signac",
-"Seurat",
-"EnsDb.Hsapiens.v75",
-"tidyverse",
-"patchwork"
-)
-
-for (pkg in required_pkgs) {
-if (!requireNamespace(pkg, quietly = TRUE)) {
-stop(paste("Missing package:", pkg,
-"\nInstall it before running the pipeline."))
-}
+log_msg <- function(msg) {
+  cat(format(Sys.time(), "[%Y-%m-%d %H:%M:%S]"), msg, "\n")
+  flush.console()
 }
 
-library(Signac)
-library(Seurat)
-library(EnsDb.Hsapiens.v75)
-library(tidyverse)
-library(patchwork)
+log_msg("Pipeline started.")
 
-cat("All packages loaded successfully.\n")
+# ── 1. Read input data ───────────────────────────────────────────────────────
+#
+# WHY H5?  The filtered_peak_bc_matrix.h5 stores the sparse cell × peak count
+# matrix in HDF5 format — efficient for large matrices. Read10X_h5() parses it
+# into a standard dgCMatrix (sparse integer matrix).
 
-# -----------------------------#
+log_msg("Reading peak-count matrix …")
+counts <- Read10X_h5(cfg$input$peaks_h5)
 
-# 2. Define Input Files
+# Quick sanity check
+stopifnot(
+  "Peak matrix is empty — check the H5 path in config.yaml" =
+    nrow(counts) > 0 && ncol(counts) > 0
+)
+log_msg(sprintf("  %d peaks × %d barcodes detected.", nrow(counts), ncol(counts)))
 
-# -----------------------------#
+# ── 2. Build the ChromatinAssay ──────────────────────────────────────────────
+#
+# WHY CreateChromatinAssay (not CreateAssayObject)?
+# ATAC data is fundamentally *genomic*: each feature is a chromosomal region,
+# not a gene name.  ChromatinAssay links the count matrix to:
+#   • the fragment file (needed for all QC metrics)
+#   • the genome assembly (hg19 here)
+#   • genomic ranges objects for downstream peak operations
+#
+# min.cells  : drops peaks present in < 10 cells (likely noise / artefacts)
+# min.features: drops barcodes with < 200 peaks detected (empty droplets)
 
-frag_file   <- file.path(data_dir, "atac_v1_pbmc_10k_fragments.tsv.gz")
-matrix_file <- file.path(data_dir, "atac_v1_pbmc_10k_filtered_peak_bc_matrix.h5")
-meta_file   <- file.path(data_dir, "atac_v1_pbmc_10k_singlecell.csv")
-
-if (!file.exists(frag_file)) stop("Fragment file not found.")
-if (!file.exists(matrix_file)) stop("Matrix file not found.")
-if (!file.exists(meta_file)) stop("Metadata file not found.")
-
-# -----------------------------#
-
-# 3. Load 10x Peak Matrix
-
-# -----------------------------#
-
-cat("Reading 10x peak matrix...\n")
-counts <- Read10X_h5(matrix_file)
-
-# -----------------------------#
-
-# 4. Create Chromatin Assay
-
-# -----------------------------#
-
-cat("Creating ChromatinAssay...\n")
-
+log_msg("Creating ChromatinAssay …")
 chrom_assay <- CreateChromatinAssay(
-counts = counts,
-sep = c(":", "-"),
-fragments = frag_file,
-min.cells = 10,
-min.features = 200
+  counts       = counts,
+  sep          = c(":", "-"),           # peak names are "chr:start-end"
+  fragments    = cfg$input$fragments,
+  min.cells    = 10,
+  min.features = 200
 )
 
-# -----------------------------#
+# ── 3. Create Seurat object + metadata ──────────────────────────────────────
+#
+# CellRanger generates per-barcode statistics in singlecell.csv:
+# total fragments, peak fragments, TSS overlaps, blacklist overlaps, etc.
+# We load these as the initial metadata so QC metrics are available immediately.
 
-# 5. Load Metadata and Create Object
-
-# -----------------------------#
-
-metadata <- read.csv(meta_file, row.names = 1)
+log_msg("Creating Seurat object …")
+metadata <- read.csv(cfg$input$metadata, header = TRUE, row.names = 1)
 
 pbmc <- CreateSeuratObject(
-counts = chrom_assay,
-assay = "ATAC",
-meta.data = metadata
-)
-
-cat("Seurat object created.\n")
-
-# -----------------------------#
-
-# 6. Add Gene Annotation
-
-# -----------------------------#
-
-cat("Adding gene annotations...\n")
-
-annotations <- GetGRangesFromEnsDb(EnsDb.Hsapiens.v75)
-
-# Convert Ensembl → UCSC naming
-
-seqlevels(annotations) <- paste0("chr", seqlevels(annotations))
-
-Annotation(pbmc) <- annotations
-
-# -----------------------------#
-
-# 7. Compute QC Metrics
-
-# -----------------------------#
-
-cat("Computing QC metrics...\n")
-
-pbmc <- NucleosomeSignal(pbmc)
-pbmc <- TSSEnrichment(pbmc, fast = FALSE)
-
-pbmc$pct_reads_in_peaks <-
-pbmc$peak_region_fragments / pbmc$passed_filters * 100
-
-pbmc$blacklist_ratio <-
-pbmc$blacklist_region_fragments / pbmc$peak_region_fragments
-
-# -----------------------------#
-
-# 8. QC Filtering (Editable Thresholds)
-
-# -----------------------------#
-
-cat("Filtering low-quality cells...\n")
-
-min_fragments <- 3000
-max_fragments <- 30000
-min_TSS       <- 3
-max_nuc       <- 4
-max_blacklist <- 0.05
-min_peak_pct  <- 15
-
-pbmc <- subset(
-pbmc,
-subset =
-nCount_ATAC > min_fragments &
-nCount_ATAC < max_fragments &
-pct_reads_in_peaks > min_peak_pct &
-blacklist_ratio < max_blacklist &
-nucleosome_signal < max_nuc &
-TSS.enrichment > min_TSS
-)
-
-cat("Remaining cells:", ncol(pbmc), "\n")
-
-# -----------------------------#
-
-# 9. Dimensional Reduction (LSI)
-
-# -----------------------------#
-
-cat("Running TF-IDF normalization...\n")
-
-pbmc <- RunTFIDF(pbmc)
-pbmc <- FindTopFeatures(pbmc, min.cutoff = "q0")
-pbmc <- RunSVD(pbmc)
-
-DepthCor(pbmc)
-
-# -----------------------------#
-
-# 10. Clustering + UMAP
-
-# -----------------------------#
-
-cat("Running clustering...\n")
-
-lsi_dims <- 2:30   # Exclude LSI_1 (depth effect)
-
-pbmc <- RunUMAP(pbmc, reduction = "lsi", dims = lsi_dims)
-pbmc <- FindNeighbors(pbmc, reduction = "lsi", dims = lsi_dims)
-pbmc <- FindClusters(pbmc, algorithm = 3)
-
-# -----------------------------#
-
-# 11. Save Results
-
-# -----------------------------#
-
-cat("Saving processed object...\n")
-
-saveRDS(pbmc, file = file.path(results_dir, "pbmc_atac_processed.rds"))
-
-# Save UMAP figure
-
-png(file.path(results_dir, "UMAP_clusters.png"), width = 1800, height = 1400, res = 200)
-print(DimPlot(pbmc, label = TRUE) + NoLegend())
-dev.off()
-
-# -----------------------------#
-
-# 12. Save Session Info (Reproducibility)
-
-# -----------------------------#
-
-writeLines(
-capture.output(sessionInfo()),
-file.path(results_dir, "sessionInfo.txt")
-)
-
-cat("Pipeline completed successfully.\n")
-###############################################################
-
-
-
-
-# ATAC-Sequencing
-
-ATAC-seq: “Who left the DNA doors open?” 
-The setting  Imagine your genome as a huge apartment building. 
-Each room = a gene  
-Locked doors = gene OFF 
-Open doors = gene ON or ready to be ON  
-The problem: we cannot directly see which doors are open.  
-
-![image alt](https://github.com/suraj-chauhan-21/ATAC-Sequencing-/blob/8a8a1f6c99040e46ad86cc98fd900c4e2b192d40/Tn5_Transposase_in_ATAC-seq.webp)
-
-So we use a special molecular spy.
-The key player: Tn5 transposase 
-# script to process single-cell ATAC-Seq data
-Vignette: https://stuartlab.org/signac/articles/pbmc_vignette
-setwd("~/Desktop/demo/single_cell_ATACSeq")
-
-# Why these packages? 
- Signac: The extension of Seurat designed specifically for chromatin data.
-EnsDb.Hsapiens.v75: Provides the genomic coordinates (genes/exons) for the hg19 genome.
-
-<img width="990" height="571" alt="image" src="https://github.com/user-attachments/assets/dfe0df32-4c24-45c2-95af-54d7bb1b8826" />
-
-
-# install packages
-remotes::install_github("stuart-lab/signac", ref="develop")
-install.packages("Matrix", type = "source")
-install.packages("irlba", type = "source")
-BiocManager::install("EnsDb.Hsapiens.v75")
-
-library(Signac)
-library(Seurat)
-library(EnsDb.Hsapiens.v75)
-library(tidyverse)
-
-#  What is a fragment file? 
- It is a tab-indexed file containing every single Tn5 integration site recorded. 
-We need this because the 'peak matrix' only counts reads in specific regions; 
- the fragment file allows us to calculate QC metrics like TSS enrichment from scratch.
-frag.file <- read.delim('data/atac_v1_pbmc_10k_fragments.tsv.gz', header = F, nrows = 10)
-head(frag.file)
-
-
-# 1. Read in data 
-
- H5 files contain the sparse matrix of counts (Cells x Peaks).
-counts <- Read10X_h5('data/atac_v1_pbmc_10k_filtered_peak_bc_matrix.h5')
-counts[1:10,1:10]
-
-Why CreateChromatinAssay? 
-Unlike RNA-seq, ATAC data requires genomic ranges. This step links the count matrix 
-with the fragment file and defines which genome assembly (e.g., hg19) is being used.
-chrom_assay <- CreateChromatinAssay(
-  counts = counts,
-  sep = c(":", "-"),
-  fragments = "data/atac_v1_pbmc_10k_fragments.tsv.gz",
-  min.cells = 10,     # Tip: Removes rare peaks that might be noise.
-  min.features = 200  # Tip: Removes empty droplets or low-quality cells early.
-)
-
-str(chrom_assay)
-
-# Metadata contains per-cell statistics (e.g., total fragments) generated by CellRanger.
-metadata <- read.csv(file = 'data/atac_v1_pbmc_10k_singlecell.csv', header = T, row.names = 1)
-View(metadata)
-
-
-Create a Seurat Object: 
-This is the container that holds counts, metadata, and later, clusters.
-pbmc <- CreateSeuratObject(
-  counts = chrom_assay,
+  counts    = chrom_assay,
   meta.data = metadata,
-  assay = 'ATAC'
+  assay     = "ATAC"
 )
 
-str(pbmc)
+log_msg(sprintf("  Seurat object created: %d cells.", ncol(pbmc)))
 
+# ── 4. Add gene annotation ───────────────────────────────────────────────────
+#
+# The ATAC matrix only contains coordinates (chr1:100-200).
+# Adding EnsDb annotations allows:
+#   • TSSEnrichment()  — needs TSS positions
+#   • GeneActivity()   — needs gene body coordinates (Script 02)
+#   • CoveragePlot()   — annotates genes on coverage tracks
+#
+# IMPORTANT: EnsDb uses Ensembl-style chromosome names ("1", "2" …).
+# Seurat/Signac expects UCSC style ("chr1", "chr2" …).
+# seqlevelsStyle() conversion is mandatory or coordinate matching silently fails.
 
- Adding Gene Annotation 
- Why? The ATAC matrix only tells us about coordinates (e.g., chr1:100-200). 
-Adding annotations allows us to see which genes are near those open regions.
-
-pbmc@assays$ATAC@annotation
+log_msg("Adding gene annotations (EnsDb.Hsapiens.v75 / hg19) …")
 annotations <- GetGRangesFromEnsDb(ensdb = EnsDb.Hsapiens.v75)
-
-Change to UCSC style (chr1) because EnsDb uses Ensembl style (1). 
-If styles don't match, you won't be able to map peaks to genes.
-seqlevels(annotations) <- paste0('chr', seqlevels(annotations))
-
+seqlevelsStyle(annotations) <- "UCSC"   # convert "1" → "chr1"
 Annotation(pbmc) <- annotations
-pbmc@assays$ATAC@annotation
 
+# ── 5. Compute QC metrics ────────────────────────────────────────────────────
+#
+# TSS Enrichment  : ratio of signal at TSSs vs distal regions.
+#                   ATAC-seq from healthy cells shows sharp enrichment at TSS.
+#                   Values < 3 indicate poor tagmentation or dead cells.
+#
+# Nucleosome Signal: ratio of mono-nucleosomal to sub-nucleosomal fragments.
+#                   Low values (< 4) confirm the nucleosomal ladder is intact.
+#
+# Blacklist Ratio : ENCODE blacklist regions produce artifactual signal
+#                   regardless of cell type (repetitive elements, centromeres).
+#                   Cells with > 5% reads in blacklist are discarded.
+#
+# Pct reads in peaks: library specificity.  Good libraries: > 15%.
 
-# 2. Computing QC 
-
-
-Why NucleosomeSignal? DNA wraps around nucleosomes. 
-Successful ATAC-seq should show a "ladder" pattern of fragments (mononucleosomal, dinucleosomal).
+log_msg("Computing nucleosome signal …")
 pbmc <- NucleosomeSignal(pbmc)
 
- Why TSSEnrichment? Transcription Start Sites (TSS) are usually very open. 
-High signal at TSS vs. background is the "gold standard" for ATAC-seq quality.
+log_msg("Computing TSS enrichment (fast = FALSE for accuracy) …")
 pbmc <- TSSEnrichment(object = pbmc, fast = FALSE)
 
- 
-Why Blacklist Ratio?
-Certain regions of the genome (blacklist) produce high signal 
-regardless of cell type (usually due to repetitive elements). High ratios indicate noise.
-pbmc$blacklist_ratio <- pbmc$blacklist_region_fragments / pbmc$peak_region_fragments
+pbmc$blacklist_ratio   <- pbmc$blacklist_region_fragments / pbmc$peak_region_fragments
 pbmc$pct_reads_in_peaks <- pbmc$peak_region_fragments / pbmc$passed_filters * 100
 
-View(pbmc@meta.data)
+log_msg("QC metrics computed.")
+
+# ── 6. Visualise QC — inspect BEFORE filtering ──────────────────────────────
+#
+# TIP: Look at the density scatter plots.  The quantile lines show you where
+# most cells fall.  Your filter cutoffs should cleanly separate the main cloud
+# from the low-quality tails — adjust config.yaml accordingly.
+
+log_msg("Plotting QC metrics …")
+
+a1 <- DensityScatter(pbmc, x = "nCount_ATAC", y = "TSS.enrichment",
+                     log_x = TRUE, quantiles = TRUE) +
+      ggtitle("Fragment count vs TSS Enrichment")
+
+a2 <- DensityScatter(pbmc, x = "nucleosome_signal", y = "TSS.enrichment",
+                     log_x = TRUE, quantiles = TRUE) +
+      ggtitle("Nucleosome Signal vs TSS Enrichment")
+
+vln <- VlnPlot(
+  object   = pbmc,
+  features = c("nCount_ATAC", "nFeature_ATAC", "TSS.enrichment",
+                "nucleosome_signal", "blacklist_ratio", "pct_reads_in_peaks"),
+  pt.size  = 0.1,
+  ncol     = 6
+)
+
+ggsave("results/QC_density_scatter.png", a1 | a2, width = 14, height = 6, dpi = 150)
+ggsave("results/QC_violin.png",          vln,      width = 18, height = 5, dpi = 150)
+
+log_msg("  QC plots saved to results/")
+
+# ── 7. Filter low-quality cells ──────────────────────────────────────────────
+#
+# Thresholds come from config.yaml — do NOT hard-code here.
+# After filtering, print a summary so the log records how many cells pass.
+
+n_before <- ncol(pbmc)
+
+pbmc <- subset(
+  x      = pbmc,
+  subset =
+    nCount_ATAC        >  cfg$qc$min_count       &
+    nCount_ATAC        <  cfg$qc$max_count        &
+    pct_reads_in_peaks >  cfg$qc$min_pct_peaks    &
+    blacklist_ratio    <  cfg$qc$max_blacklist     &
+    nucleosome_signal  <  cfg$qc$max_nuc_signal   &
+    TSS.enrichment     >  cfg$qc$min_tss
+)
+
+n_after <- ncol(pbmc)
+log_msg(sprintf("QC filtering: %d → %d cells retained (%.1f%% passed).",
+                n_before, n_after, 100 * n_after / n_before))
+
+if (n_after < 100) {
+  warning("Fewer than 100 cells remain after QC — check your thresholds in config.yaml.")
+}
+
+# ── 8. Normalisation: TF-IDF ─────────────────────────────────────────────────
+#
+# WHY TF-IDF and not log-normalisation?
+# ATAC data is binary-like (open = 1, closed = 0) and extremely sparse.
+# TF (term frequency) = how often peak i is open in cell j.
+# IDF (inverse document frequency) = penalises peaks open in MANY cells
+#   (ubiquitous housekeeping regions) and up-weights rare, informative peaks.
+# Together, TF-IDF removes library-size bias and highlights discriminative peaks.
+
+log_msg("Running TF-IDF normalisation …")
+pbmc <- RunTFIDF(pbmc)
+
+# ── 9. Feature selection ─────────────────────────────────────────────────────
+#
+# min.cutoff = "q0" keeps ALL peaks (no variance filtering).
+# For large datasets consider "q5" (top 95% most variable) to reduce noise.
+
+log_msg("Selecting top features …")
+pbmc <- FindTopFeatures(pbmc, min.cutoff = "q0")
+
+# ── 10. Dimensionality reduction: LSI ────────────────────────────────────────
+#
+# WHY SVD / LSI instead of PCA?
+# PCA assumes data is normally distributed and works on dense matrices.
+# ATAC matrices are sparse and binary — LSI (TF-IDF + truncated SVD) is the
+# information-retrieval equivalent of PCA and is standard for ATAC-seq.
+#
+# After RunSVD(), always check DepthCor():
+#   If LSI_1 correlates strongly (|r| > 0.75) with sequencing depth, exclude it.
+#   We exclude it by default (dims 2:30) following the Signac vignette.
+
+log_msg("Running SVD (LSI) …")
+pbmc <- RunSVD(pbmc)
+
+depth_cor_plot <- DepthCor(pbmc)
+ggsave("results/LSI_depth_correlation.png", depth_cor_plot, width = 8, height = 4, dpi = 150)
+log_msg("  Depth-correlation plot saved — verify LSI_1 is excluded from clustering.")
+
+lsi_dims <- cfg$clustering$lsi_dims[1]:cfg$clustering$lsi_dims[2]
+
+# ── 11. Non-linear reduction: UMAP ───────────────────────────────────────────
+
+log_msg("Running UMAP …")
+pbmc <- RunUMAP(object = pbmc, reduction = "lsi", dims = lsi_dims)
 
-# Visualizing QC 
-Use these plots to define your "cutoff" lines for filtering.
-colnames(pbmc@meta.data)
-a1 <- DensityScatter(pbmc, x = 'nCount_ATAC', y = 'TSS.enrichment', log_x = TRUE, quantiles = TRUE)
-a2 <- DensityScatter(pbmc, x = 'nucleosome_signal', y = 'TSS.enrichment', log_x = TRUE, quantiles = TRUE)
+# ── 12. Graph-based clustering ───────────────────────────────────────────────
+#
+# Algorithm 3 = SLM (Smart Local Moving) — robust and fast for large datasets.
+# Resolution controls granularity: higher → more clusters.
 
-a1 | a2
+log_msg("Finding neighbours and clusters …")
+pbmc <- FindNeighbors(object = pbmc, reduction = "lsi", dims = lsi_dims)
+pbmc <- FindClusters(object  = pbmc,
+                     algorithm  = cfg$clustering$algorithm,
+                     resolution = cfg$clustering$resolution)
 
-VlnPlot(object = pbmc, 
-        features = c('nCount_ATAC', 'nFeature_ATAC', 'TSS.enrichment', 'nucleosome_signal', 'blacklist_ratio', 'pct_reads_in_peaks'),
-        pt.size = 0.1,
-        ncol = 6)
+n_clusters <- length(unique(Idents(pbmc)))
+log_msg(sprintf("  %d clusters identified at resolution %.2f.",
+                n_clusters, cfg$clustering$resolution))
 
+# ── 13. Visualise clusters ───────────────────────────────────────────────────
 
-# Filtering poor quality cells 
- Tip: These thresholds are "vignette" defaults. Always adjust based on your VlnPlots above.
-pbmc <- subset(x = pbmc,
-                subset = nCount_ATAC > 3000 &
-                 nCount_ATAC < 30000 &
-                 pct_reads_in_peaks > 15 & 
-                 blacklist_ratio < 0.05 &
-                 nucleosome_signal < 4 &
-                 TSS.enrichment > 3)
+log_msg("Plotting UMAP …")
+umap_plot <- DimPlot(object = pbmc, label = TRUE) + NoLegend() +
+             ggtitle(sprintf("scATAC-seq — %d cells, %d clusters", ncol(pbmc), n_clusters))
 
+ggsave("results/UMAP_clusters.png", umap_plot, width = 8, height = 7, dpi = 150)
 
-# 3. Normalization and linear dimensional reduction 
+# ── 14. Save processed object & session info ─────────────────────────────────
 
-Why RunTFIDF? ATAC data is binary (open or closed). 
-TF-IDF normalizes for total library size and for how common a peak is across cells.
-pbmc <- RunTFIDF(pbmc) 
+log_msg("Saving processed Seurat object …")
+saveRDS(pbmc, "results/pbmc_atac_processed.rds")
 
-Why FindTopFeatures? We only use the most variable peaks for clustering to reduce noise.
-pbmc <- FindTopFeatures(pbmc, min.cutoff = 'q0') 
+log_msg("Saving session info …")
+writeLines(capture.output(sessionInfo()), "results/sessionInfo_01.txt")
 
-Why RunSVD? (Latent Semantic Indexing - LSI)
-#This is the "PCA equivalent" for ATAC-seq. It compresses the sparse peak data.
-pbmc <- RunSVD(pbmc) 
-
-Tip: Use DepthCor to see if the first LSI component correlates with sequencing depth. 
-If it does, you should exclude LSI_1 from downstream clustering (dims = 2:30).
-DepthCor(pbmc)
-
-
-# 4. Non-linear dimensional reduction and Clustering 
-
- We use dims 2:30 because LSI component 1 often captures technical variation (depth).
-pbmc <- RunUMAP(object = pbmc, reduction = 'lsi', dims = 2:30)
-pbmc <- FindNeighbors(object = pbmc, reduction = 'lsi', dims = 2:30)
-
-Algorithm 3 is SLM (Smart Local Moving), which is robust for large datasets.
-pbmc <- FindClusters(object = pbmc, algorithm = 3)
-
-Visualize the result!
-DimPlot(object = pbmc, label = TRUE) + NoLegend()
-
-<img width="749" height="207" alt="image" src="https://github.com/user-attachments/assets/78680284-d739-4914-82b7-4896f739d144" />
-
-
-# script to perform differential peak accesibility analysis and visualize genomic regions using single-cell ATAC-Seq data
-# Vignette: https://stuartlab.org/signac/articles/pbmc_vignette
-# continued from: PART 1 link: https://youtu.be/yEKZJVjc5DY?si=cm0okOcJQMwkCvPo
-# setwd("~/Desktop/demo/single_cell_ATACSeq")
-
-# install packages
-# remotes::install_github("stuart-lab/signac", ref="develop")
-# install.packages("Matrix", type = "source")
-# install.packages("irlba", type = "source")
-# BiocManager::install("EnsDb.Hsapiens.v75")
-
-library(Signac)
-library(Seurat)
-library(EnsDb.Hsapiens.v75)
-library(tidyverse)
-library(SingleR)
-
-# Pre-processed ATAC data ----------------------------------------------------
-pbmc
-DimPlot(object = pbmc, label = TRUE) + NoLegend()
-
-# Create a gene activity matrix ------------------------------------------------
-gene.activities <- GeneActivity(pbmc)
-gene.activities[1:10,1:10]
-
-# add the gene activity matrix to the Seurat object as a new assay and normalize it
-pbmc[['RNA']] <- CreateAssayObject(counts = gene.activities)
-pbmc@assays
-pbmc <- NormalizeData(object = pbmc,
-              assay = 'RNA',
-              normalization.method = 'LogNormalize',
-              scale.factor = median(pbmc$nCount_RNA))
-
-
-# to interpret ATAC-Seq clusters, visualizing activity of canonical marker genes
-# assuming a general correspondence between gene body/promoter accessibility and gene expression which may not always be the case
-
-DefaultAssay(pbmc) <- 'RNA'
-
-FeaturePlot(pbmc, features = c('MS4A1', 'CD3D', 'LEF1', 'NKG7', 'TREM1', 'LYZ'),
-            pt.size = 0.1,
-            max.cutoff = 'q95',
-            ncol = 3)
-
-
-# Integrating with scRNA-Seq data. ---------------------------------------------
-# Link to pre-processed RNA-Seq data: https://signac-objects.s3.amazonaws.com/pbmc_10k_v3.rds
-
-# Load the pre-processed scRNA-seq data for PBMCs
-pbmc_rna <- readRDS('data/pbmc_10k_v3.rds')
-pbmc_rna <- UpdateSeuratObject(pbmc_rna)
-
-View(pbmc_rna@meta.data)
-
-# plot them before integrating
-p1 <- DimPlot(pbmc, reduction = 'umap') + NoLegend() + ggtitle('scATAC-Seq')
-p2 <- DimPlot(pbmc_rna, reduction = 'umap', group.by = 'celltype', repel = TRUE, label = TRUE) + ggtitle('scRNA-Seq') + NoLegend()
-
-p1 | p2
-
-# ** Should have the prior knowledge of cell types expected in your query dataset when using ref dataset
-
-
-# ....Transfer Anchors by Seurat --------------
-# Identify anchors
-
-transfer.anchors <- FindTransferAnchors(reference = pbmc_rna,
-                    query = pbmc,
-                    reduction = 'pcaproject') # CCA is very slow
-
-
-predicted.labels <- TransferData(anchorset = transfer.anchors,
-             refdata = pbmc_rna$celltype,
-             weight.reduction = pbmc[['lsi']],
-             dims = 2:30)
-head(predicted.labels)
-
-pbmc <- AddMetaData(object = pbmc, metadata = predicted.labels)
-View(pbmc@meta.data)
-
-
-plot1 <- DimPlot(pbmc, 
-        reduction = 'umap',
-        group.by = 'predicted.id',
-        label = TRUE,
-        repel = TRUE) + NoLegend() + ggtitle('scATAC-Seq')
-
-plot2 <- DimPlot(pbmc_rna, 
-                 reduction = 'umap',
-                 group.by = 'celltype',
-                 label = TRUE,
-                 repel = TRUE) + NoLegend() + ggtitle('scRNA-Seq')
-
-plot1 | plot2
-
-
-
-# Finding differentially accessible peaks between cell types -------------------
-Idents(pbmc) <- pbmc$predicted.id
-
-
-# change back to working with peaks instead of gene activities
-DefaultAssay(pbmc) <- 'ATAC'
-
-da_peaks <- FindMarkers(object = pbmc,
-            ident.1 = 'CD4 Naive',
-            ident.2 = 'CD14+ Monocytes',
-            test.use = 'LR',
-            latent.vars = 'nCount_ATAC')
-
-head(da_peaks)
-
-da_plot1 <- VlnPlot(object = pbmc,
-        features = rownames(da_peaks)[1],
-        pt.size = 0.1,
-        idents = c('CD4 Naive','CD14+ Monocytes'))
-
-da_plot2 <- FeaturePlot(object = pbmc,
-            features = rownames(da_peaks)[1],
-            pt.size = 0.1)
-
-da_plot1 | da_plot2
-
-
-# fold change between two groups of cells
-fc <- FoldChange(object = pbmc, ident.1 = 'CD4 Naive', ident.2 = 'CD14+ Monocytes')
-# order by fold change
-fc <- fc[order(fc$avg_log2FC, decreasing = TRUE),]
-head(fc)
-
-
-
-# plotting genomic regions -----------------------------------
-
-
-# set plotting order
-
-levels(pbmc) <- unique(pbmc$predicted.id)
-
-CoveragePlot(object = pbmc,
-             region = rownames(da_peaks)[1],
-             extend.upstream = 40000,
-             extend.downstream = 20000)
-
-
-# create interactive version of these plots?
-CoverageBrowser(pbmc, region = 'CD8A')
-
-**
+log_msg("=== Script 01 complete.  Run 02_label_transfer_and_DA.R next. ===")
