@@ -1,0 +1,96 @@
+# =============================================================================
+# Conda Environment — ATAC-Seq Pipeline
+# =============================================================================
+# Creates a fully pinned software environment for reproducible ATAC-seq analysis
+# using the Signac + Seurat framework in R.
+#
+# USAGE
+# -----
+#   # Create the environment (first time)
+#   conda env create -f environment.yml
+#
+#   # Activate before every session
+#   conda activate atac_seq
+#
+#   # Update an existing environment after editing this file
+#   conda env update -f environment.yml --prune
+#
+#   # Export your current environment to recreate it exactly elsewhere
+#   conda env export > environment_lock.yml
+#
+# NOTES
+# -----
+#   • Bioconductor packages (Signac, EnsDb) are installed via conda-forge /
+#     bioconda channels; versions here correspond to Bioconductor 3.18.
+#   • System-level tools (samtools, tabix, htslib) are included so fragment-
+#     file indexing works inside the same conda environment.
+#   • Tested on Linux x86_64 and macOS arm64 (Apple Silicon).
+#     On Apple Silicon prefix conda-forge builds are preferred over defaults.
+# =============================================================================
+
+name: atac_seq
+
+channels:
+  - conda-forge      # primary source — broad, well-maintained
+  - bioconda         # Bioconductor + genomics command-line tools
+  - defaults         # fallback only
+
+dependencies:
+
+  # ── Core R runtime ──────────────────────────────────────────────────────────
+  - r-base=4.3.2
+
+  # ── Seurat ecosystem ────────────────────────────────────────────────────────
+  - r-seurat=5.0.1
+  - r-seuratobject=5.0.1
+
+  # ── Signac (scATAC-seq) ─────────────────────────────────────────────────────
+  - bioconductor-signac=1.12.0
+
+  # ── Genome annotation ───────────────────────────────────────────────────────
+  - bioconductor-ensdb.hsapiens.v75=2.99.0
+  - bioconductor-bsgenome.hsapiens.ucsc.hg19=1.4.3   # required for motif enrichment
+  - bioconductor-jaspar2020=0.99.10                   # TF motif database
+
+  # ── Bioconductor core ───────────────────────────────────────────────────────
+  - bioconductor-genomicranges=1.54.1
+  - bioconductor-iranges=2.36.0
+  - bioconductor-biocgenerics=0.48.1
+  - bioconductor-tfbstools=1.40.0                     # motif objects
+  - bioconductor-chromvar=1.24.0                      # per-cell TF activity
+
+  # ── Tidyverse & plotting ────────────────────────────────────────────────────
+  - r-tidyverse=2.0.0
+  - r-ggplot2=3.4.4
+  - r-patchwork=1.2.0
+  - r-cowplot=1.1.3
+
+  # ── Config parsing ──────────────────────────────────────────────────────────
+  - r-yaml=2.3.8
+
+  # ── Reproducibility ─────────────────────────────────────────────────────────
+  - r-renv=1.0.3         # R package lockfile management
+
+  # ── Genomics command-line tools ─────────────────────────────────────────────
+  - samtools=1.19.2      # BAM/fragment file manipulation
+  - htslib=1.19.1        # tabix + bgzip (fragment file indexing)
+  - tabix=1.11           # tabix binary (some distros separate it)
+  - bedtools=2.31.1      # BED operations (blacklist filtering, etc.)
+
+  # ── Python (for optional Snakemake / notebook integration) ──────────────────
+  - python=3.11.7
+  - pip
+
+  - pip:
+      # Snakemake — optional, for workflow management
+      - snakemake==7.32.4
+
+# =============================================================================
+# POST-INSTALL: install Signac from GitHub if you need the development version
+# =============================================================================
+# Run this INSIDE the activated conda environment in R:
+#
+#   install.packages("remotes")
+#   remotes::install_github("stuart-lab/signac", ref = "develop")
+#
+# =============================================================================
